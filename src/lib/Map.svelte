@@ -10,6 +10,7 @@
     : 'https://tiles.openfreemap.org/styles/liberty'
   import { routeState } from '../stores/route.svelte.js'
   import { tracksStore } from '../stores/tracks.svelte.js'
+  import { toolStore, TOOLS } from '../stores/tool.svelte.js'
 
   let container
   let map
@@ -27,20 +28,32 @@
 
   function rebuildMarkers(waypoints) {
     markerInstances.forEach(m => m.remove())
+    const tool = toolStore.active
     markerInstances = waypoints.map((wp, i) => {
       const isFirst = i === 0
       const isLast  = i === waypoints.length - 1
-      const marker  = new maplibregl.Marker({
-        element: createMarkerEl(isFirst, isLast),
-        draggable: true,
+      const el      = createMarkerEl(isFirst, isLast)
+
+      if (tool === TOOLS.ERASER) el.style.cursor = 'crosshair'
+
+      const marker = new maplibregl.Marker({
+        element: el,
+        draggable: tool !== TOOLS.ERASER,
         anchor: 'center',
       }).setLngLat(wp).addTo(map)
 
-      marker.on('dragend', () => {
-        routeState.moveWaypoint(i, marker.getLngLat())
+      if (tool !== TOOLS.ERASER) {
+        marker.on('dragend', () => routeState.moveWaypoint(i, marker.getLngLat()))
+      }
+
+      el.addEventListener('click', e => {
+        if (toolStore.active === TOOLS.ERASER) {
+          e.stopPropagation()
+          routeState.removeWaypoint(i)
+        }
       })
 
-      marker.getElement().addEventListener('contextmenu', e => {
+      el.addEventListener('contextmenu', e => {
         e.preventDefault()
         routeState.removeWaypoint(i)
       })
@@ -49,10 +62,10 @@
     })
   }
 
-  // Sync markers whenever waypoints change (after map is ready)
-  // rebuildMarkers handles its own cleanup; onDestroy handles component teardown
+  // Sync markers whenever waypoints or active tool change
   $effect(() => {
-    const wps = routeState.waypoints.slice()
+    const wps  = routeState.waypoints.slice()
+    void toolStore.active  // track as dependency
     if (!mapLoaded) return
     rebuildMarkers(wps)
   })
@@ -115,11 +128,35 @@
     return minIdx
   }
 
+  // --- Cursor management -----------------------------------------------
+
+  $effect(() => {
+    if (!mapLoaded) return
+    const cursor = { [TOOLS.SELECT]: '', [TOOLS.ERASER]: 'cell', [TOOLS.PLACE]: 'crosshair' }
+    map.getCanvas().style.cursor = cursor[toolStore.active] ?? ''
+    clearRubberBand()
+  })
+
+  // --- Lasso helpers ---------------------------------------------------
+
+  function pixelRectToPolygon(p1, p2) {
+    const corners = [
+      [p1.x, p1.y], [p2.x, p1.y], [p2.x, p2.y], [p1.x, p2.y], [p1.x, p1.y],
+    ].map(([x, y]) => { const c = map.unproject([x, y]); return [c.lng, c.lat] })
+    return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [corners] } }
+  }
+
+  function inPixelRect(lngLat, p1, p2) {
+    const { x, y } = map.project(lngLat)
+    return x >= Math.min(p1.x, p2.x) && x <= Math.max(p1.x, p2.x)
+        && y >= Math.min(p1.y, p2.y) && y <= Math.max(p1.y, p2.y)
+  }
+
   // --- Rubber band (cursor → last waypoint preview line) ---------------
 
   function setRubberBand(lngLat) {
     const wps = routeState.waypoints
-    if (!wps.length) { clearRubberBand(); return }
+    if (!wps.length || toolStore.active !== TOOLS.PLACE) { clearRubberBand(); return }
     const last = wps[wps.length - 1]
     map.getSource('rubber-band').setData({
       type: 'Feature',
@@ -140,6 +177,7 @@
 
   function setupLineDrag() {
     map.on('mousedown', 'route-hit', e => {
+      if (toolStore.active !== TOOLS.PLACE) return
       e.preventDefault()
       isLineDragging = true
       const insertIdx = findInsertIndex(e.lngLat)
@@ -269,10 +307,59 @@
       })
       map.getCanvas().addEventListener('mouseleave', clearRubberBand)
 
-      // Click on blank map → append waypoint
+      // Click on blank map → append waypoint (place tool only)
       map.on('click', e => {
         if (e.defaultPrevented) return
-        routeState.addWaypoint(e.lngLat)
+        if (toolStore.active === TOOLS.PLACE) routeState.addWaypoint(e.lngLat)
+      })
+
+      // Eraser lasso: shift+drag to select and delete multiple waypoints
+      map.addSource('lasso', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.addLayer({
+        id: 'lasso-fill',
+        type: 'fill',
+        source: 'lasso',
+        paint: { 'fill-color': '#f38ba8', 'fill-opacity': 0.15 },
+      })
+      map.addLayer({
+        id: 'lasso-line',
+        type: 'line',
+        source: 'lasso',
+        paint: { 'line-color': '#f38ba8', 'line-width': 1.5, 'line-dasharray': [3, 2] },
+      })
+
+      map.on('mousedown', e => {
+        if (toolStore.active !== TOOLS.ERASER || !e.originalEvent.shiftKey) return
+        e.preventDefault()
+        map.dragPan.disable()
+
+        const start = e.point
+
+        const onMove = ev => {
+          map.getSource('lasso').setData(pixelRectToPolygon(start, ev.point))
+        }
+
+        const onUp = ev => {
+          map.off('mousemove', onMove)
+          map.off('mouseup',   onUp)
+          map.dragPan.enable()
+          map.getSource('lasso').setData({ type: 'FeatureCollection', features: [] })
+
+          // Collect indices of waypoints inside lasso (delete high→low to preserve indices)
+          const toDelete = routeState.waypoints
+            .map((wp, i) => ({ wp, i }))
+            .filter(({ wp }) => inPixelRect({ lng: wp.lng, lat: wp.lat }, start, ev.point))
+            .map(({ i }) => i)
+            .sort((a, b) => b - a)
+
+          toDelete.forEach(i => routeState.removeWaypoint(i))
+        }
+
+        map.on('mousemove', onMove)
+        map.on('mouseup',   onUp)
       })
 
       setupLineDrag()

@@ -3,6 +3,7 @@
   import Map from './lib/Map.svelte'
   import Sidebar from './lib/Sidebar.svelte'
   import Toolbar from './lib/Toolbar.svelte'
+  import BottomToolbar from './lib/BottomToolbar.svelte'
   import { routeState } from './stores/route.svelte.js'
   import { tracksStore } from './stores/tracks.svelte.js'
 
@@ -20,7 +21,10 @@
   <Toolbar />
   <div class="main">
     <Sidebar />
-    <Map />
+    <div class="map-area">
+      <Map />
+      <BottomToolbar />
+    </div>
   </div>
 </div>
 
@@ -45,6 +49,12 @@
 
   .main {
     display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  .map-area {
+    position: relative;
     flex: 1;
     overflow: hidden;
   }
