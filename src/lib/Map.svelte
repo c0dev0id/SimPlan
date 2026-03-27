@@ -3,6 +3,11 @@
   import maplibregl from 'maplibre-gl'
   import 'maplibre-gl/dist/maplibre-gl.css'
   import { MAPTILER_KEY } from '../config.js'
+
+  // Use MapTiler outdoor when a key is available; fall back to OpenFreeMap (no key/quota)
+  const MAP_STYLE = MAPTILER_KEY
+    ? `https://api.maptiler.com/maps/outdoor-v2/style.json?key=${MAPTILER_KEY}`
+    : 'https://tiles.openfreemap.org/styles/liberty'
   import { routeState } from '../stores/route.svelte.js'
   import { tracksStore } from '../stores/tracks.svelte.js'
 
@@ -160,7 +165,7 @@
   onMount(() => {
     map = new maplibregl.Map({
       container,
-      style: `https://api.maptiler.com/maps/outdoor-v2/style.json?key=${MAPTILER_KEY}`,
+      style: MAP_STYLE,
       center: [10, 50],
       zoom: 5,
     })
