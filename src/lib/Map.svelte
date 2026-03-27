@@ -155,7 +155,7 @@
 
   $effect(() => {
     if (!mapLoaded) return
-    const cursor = { [TOOLS.SELECT]: '', [TOOLS.ERASER]: 'cell', [TOOLS.PLACE]: 'crosshair' }
+    const cursor = { [TOOLS.SELECT]: '', [TOOLS.ERASER]: 'cell', [TOOLS.ROUTE]: 'crosshair', [TOOLS.TRACK]: 'crosshair' }
     map.getCanvas().style.cursor = cursor[toolStore.active] ?? ''
     clearRubberBand()
   })
@@ -179,7 +179,8 @@
 
   function setRubberBand(lngLat) {
     const wps = routeState.waypoints
-    if (!wps.length || toolStore.active !== TOOLS.PLACE) { clearRubberBand(); return }
+    const drawing = toolStore.active === TOOLS.ROUTE || toolStore.active === TOOLS.TRACK
+    if (!wps.length || !drawing) { clearRubberBand(); return }
     const last = wps[wps.length - 1]
     map.getSource('rubber-band').setData({
       type: 'Feature',
@@ -200,7 +201,7 @@
 
   function setupLineDrag() {
     map.on('mousedown', 'route-hit', e => {
-      if (toolStore.active !== TOOLS.PLACE) return
+      if (toolStore.active !== TOOLS.ROUTE) return  // line-drag only when routing
       e.preventDefault()
       isLineDragging = true
       const insertIdx = findInsertIndex(e.lngLat)
@@ -333,7 +334,8 @@
       // Click on blank map → append waypoint (place tool only)
       map.on('click', e => {
         if (e.defaultPrevented) return
-        if (toolStore.active === TOOLS.PLACE) routeState.addWaypoint(e.lngLat)
+        if (toolStore.active === TOOLS.ROUTE) routeState.addWaypoint(e.lngLat, undefined, false)
+        else if (toolStore.active === TOOLS.TRACK) routeState.addWaypoint(e.lngLat, undefined, true)
       })
 
       // Eraser lasso: shift+drag to select and delete multiple waypoints

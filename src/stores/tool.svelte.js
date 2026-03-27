@@ -1,11 +1,12 @@
 export const TOOLS = {
   SELECT: 'select',
+  ROUTE:  'route',   // draw with BRouter snapping
+  TRACK:  'track',   // draw with straight lines
   ERASER: 'eraser',
-  PLACE:  'place',
 }
 
 function createToolStore() {
-  let active = $state(TOOLS.PLACE)
+  let active = $state(TOOLS.ROUTE)
 
   return {
     get active() { return active },
