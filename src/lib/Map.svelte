@@ -136,11 +136,16 @@
     return POI_SYMBOLS.find(s => s.id === symId) ?? POI_SYMBOLS[0]
   }
 
-  function poiPinSvg(color, w = 22, h = 30) {
+  // Build the teardrop pin SVG with the Maki icon embedded in the white circle.
+  // The Maki icons use a 15×15 viewBox; we scale them to 7.5×7.5 centered at (10,10).
+  function poiPinSvg(sym, w = 22, h = 30) {
     return `<svg viewBox="0 0 20 28" width="${w}" height="${h}" aria-hidden="true">
       <path d="M10 0C4.5 0 0 4.5 0 10c0 7.5 10 18 10 18s10-10.5 10-18C20 4.5 15.5 0 10 0z"
-            fill="${color}" stroke="white" stroke-width="1.5"/>
-      <circle cx="10" cy="10" r="3.8" fill="white" fill-opacity="0.88"/>
+            fill="${sym.color}" stroke="white" stroke-width="1.5"/>
+      <circle cx="10" cy="10" r="4.5" fill="white" fill-opacity="0.9"/>
+      <svg x="6.25" y="6.25" width="7.5" height="7.5" viewBox="0 0 15 15" fill="${sym.color}">
+        ${sym.content}
+      </svg>
     </svg>`
   }
 
@@ -162,7 +167,7 @@
       if (poiMarkerMap.has(poi.id)) {
         // Update existing marker visuals
         const el = poiMarkerMap.get(poi.id).marker.getElement()
-        el.querySelector('.poi-pin').innerHTML = poiPinSvg(sym.color)
+        el.querySelector('.poi-pin').innerHTML = poiPinSvg(sym)
         let nameEl = el.querySelector('.poi-name')
         if (poi.name) {
           if (!nameEl) { nameEl = document.createElement('span'); nameEl.className = 'poi-name'; el.appendChild(nameEl) }
@@ -176,7 +181,7 @@
         el.className = 'poi-marker'
         const pin = document.createElement('div')
         pin.className = 'poi-pin'
-        pin.innerHTML = poiPinSvg(sym.color)
+        pin.innerHTML = poiPinSvg(sym)
         el.appendChild(pin)
         if (poi.name) {
           const n = document.createElement('span')
@@ -245,7 +250,7 @@
       const btn = document.createElement('button')
       btn.className = 'poi-sym-btn' + (poi.symbol === sym.id ? ' active' : '')
       btn.title = sym.label
-      btn.innerHTML = poiPinSvg(sym.color, 14, 20)
+      btn.innerHTML = poiPinSvg(sym, 14, 20)
       btn.addEventListener('click', () => {
         poisStore.update(id, { symbol: sym.id })
         symGrid.querySelectorAll('.poi-sym-btn').forEach(b => b.classList.toggle('active', b === btn))
