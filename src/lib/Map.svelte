@@ -11,6 +11,7 @@
   import { routeState } from '../stores/route.svelte.js'
   import { tracksStore } from '../stores/tracks.svelte.js'
   import { toolStore, TOOLS } from '../stores/tool.svelte.js'
+  import { poisStore, POI_SYMBOLS } from '../stores/pois.svelte.js'
 
   let container
   let map
@@ -110,14 +111,164 @@
       routeState.removeWaypoint(e.features[0].properties.index)
     })
 
-    // Cursor hints
+    // Cursor hints — preserve crosshair in drawing modes for accurate placement
     map.on('mouseenter', 'waypoints-circle', () => {
-      if (toolStore.active !== TOOLS.ERASER) map.getCanvas().style.cursor = 'grab'
+      if (toolStore.active === TOOLS.SELECT) map.getCanvas().style.cursor = 'grab'
     })
     map.on('mouseleave', 'waypoints-circle', () => {
-      map.getCanvas().style.cursor = ''
+      if (toolStore.active === TOOLS.SELECT) map.getCanvas().style.cursor = ''
     })
   }
+
+  // --- POI markers (HTML, individually managed) ------------------------
+
+  const poiMarkerMap = new Map() // id → { marker, popup: Popup|null }
+
+  function poiSymDef(symId) {
+    return POI_SYMBOLS.find(s => s.id === symId) ?? POI_SYMBOLS[0]
+  }
+
+  function poiPinSvg(color, w = 22, h = 30) {
+    return `<svg viewBox="0 0 20 28" width="${w}" height="${h}" aria-hidden="true">
+      <path d="M10 0C4.5 0 0 4.5 0 10c0 7.5 10 18 10 18s10-10.5 10-18C20 4.5 15.5 0 10 0z"
+            fill="${color}" stroke="white" stroke-width="1.5"/>
+      <circle cx="10" cy="10" r="3.8" fill="white" fill-opacity="0.88"/>
+    </svg>`
+  }
+
+  function syncPoiMarkers(pois) {
+    const ids = new Set(pois.map(p => p.id))
+
+    // Remove deleted POIs
+    poiMarkerMap.forEach((entry, id) => {
+      if (!ids.has(id)) {
+        entry.popup?.remove()
+        entry.marker.remove()
+        poiMarkerMap.delete(id)
+      }
+    })
+
+    pois.forEach(poi => {
+      const sym = poiSymDef(poi.symbol)
+
+      if (poiMarkerMap.has(poi.id)) {
+        // Update existing marker visuals
+        const el = poiMarkerMap.get(poi.id).marker.getElement()
+        el.querySelector('.poi-pin').innerHTML = poiPinSvg(sym.color)
+        let nameEl = el.querySelector('.poi-name')
+        if (poi.name) {
+          if (!nameEl) { nameEl = document.createElement('span'); nameEl.className = 'poi-name'; el.appendChild(nameEl) }
+          nameEl.textContent = poi.name
+        } else if (nameEl) {
+          nameEl.remove()
+        }
+      } else {
+        // Create new marker
+        const el = document.createElement('div')
+        el.className = 'poi-marker'
+        const pin = document.createElement('div')
+        pin.className = 'poi-pin'
+        pin.innerHTML = poiPinSvg(sym.color)
+        el.appendChild(pin)
+        if (poi.name) {
+          const n = document.createElement('span')
+          n.className = 'poi-name'
+          n.textContent = poi.name
+          el.appendChild(n)
+        }
+
+        el.addEventListener('click', ev => {
+          ev.stopPropagation()
+          if (toolStore.active === TOOLS.ERASER) {
+            removePoiMarker(poi.id)
+          } else if (toolStore.active === TOOLS.SELECT || toolStore.active === TOOLS.WAYPOINT) {
+            openPoiPopup(poi.id)
+          }
+        })
+
+        el.addEventListener('contextmenu', ev => {
+          ev.preventDefault()
+          removePoiMarker(poi.id)
+        })
+
+        const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
+          .setLngLat([poi.lng, poi.lat])
+          .addTo(map)
+
+        poiMarkerMap.set(poi.id, { marker, popup: null })
+      }
+    })
+  }
+
+  function removePoiMarker(id) {
+    const entry = poiMarkerMap.get(id)
+    if (!entry) return
+    entry.popup?.remove()
+    entry.marker.remove()
+    poiMarkerMap.delete(id)
+    poisStore.remove(id)
+  }
+
+  function openPoiPopup(id) {
+    const entry = poiMarkerMap.get(id)
+    if (!entry) return
+
+    // Toggle off if already open
+    if (entry.popup) { entry.popup.remove(); return }
+
+    // Close all other POI popups
+    poiMarkerMap.forEach((e, eid) => { if (eid !== id && e.popup) { e.popup.remove(); e.popup = null } })
+
+    const poi = poisStore.pois.find(p => p.id === id)
+    if (!poi) return
+
+    const wrap = document.createElement('div')
+    wrap.className = 'poi-edit'
+
+    const nameInput = document.createElement('input')
+    nameInput.className = 'poi-edit-name'
+    nameInput.placeholder = 'Name…'
+    nameInput.value = poi.name
+    nameInput.addEventListener('input', ev => poisStore.update(id, { name: ev.target.value }))
+
+    const symGrid = document.createElement('div')
+    symGrid.className = 'poi-edit-syms'
+    POI_SYMBOLS.forEach(sym => {
+      const btn = document.createElement('button')
+      btn.className = 'poi-sym-btn' + (poi.symbol === sym.id ? ' active' : '')
+      btn.title = sym.label
+      btn.innerHTML = poiPinSvg(sym.color, 14, 20)
+      btn.addEventListener('click', () => {
+        poisStore.update(id, { symbol: sym.id })
+        symGrid.querySelectorAll('.poi-sym-btn').forEach(b => b.classList.toggle('active', b === btn))
+      })
+      symGrid.appendChild(btn)
+    })
+
+    const delBtn = document.createElement('button')
+    delBtn.className = 'poi-del-btn'
+    delBtn.textContent = 'Delete'
+    delBtn.addEventListener('click', () => removePoiMarker(id))
+
+    wrap.appendChild(nameInput)
+    wrap.appendChild(symGrid)
+    wrap.appendChild(delBtn)
+
+    const popup = new maplibregl.Popup({ closeButton: true, offset: 32, className: 'poi-popup' })
+      .setDOMContent(wrap)
+      .setLngLat([poi.lng, poi.lat])
+      .addTo(map)
+
+    entry.popup = popup
+    popup.on('close', () => { if (entry) entry.popup = null })
+    requestAnimationFrame(() => nameInput.focus())
+  }
+
+  $effect(() => {
+    const pois = poisStore.pois.slice()
+    if (!mapLoaded) return
+    syncPoiMarkers(pois)
+  })
 
   // --- Route layer -----------------------------------------------------
 
@@ -181,7 +332,13 @@
 
   $effect(() => {
     if (!mapLoaded) return
-    const cursor = { [TOOLS.SELECT]: '', [TOOLS.ERASER]: 'cell', [TOOLS.ROUTE]: 'crosshair', [TOOLS.TRACK]: 'crosshair' }
+    const cursor = {
+      [TOOLS.SELECT]:   '',
+      [TOOLS.ERASER]:   'cell',
+      [TOOLS.ROUTE]:    'crosshair',
+      [TOOLS.TRACK]:    'crosshair',
+      [TOOLS.WAYPOINT]: 'crosshair',
+    }
     map.getCanvas().style.cursor = cursor[toolStore.active] ?? ''
     clearRubberBand()
   })
@@ -355,13 +512,14 @@
       })
       map.getCanvas().addEventListener('mouseleave', clearRubberBand)
 
-      // Click on blank map → append waypoint (skip if clicking an existing waypoint)
+      // Click on blank map → add waypoint or POI
       map.on('click', e => {
         if (e.defaultPrevented) return
         const onWp = map.queryRenderedFeatures(e.point, { layers: ['waypoints-circle'] })
         if (onWp.length > 0) return
-        if (toolStore.active === TOOLS.ROUTE) routeState.addWaypoint(e.lngLat, undefined, false)
-        else if (toolStore.active === TOOLS.TRACK) routeState.addWaypoint(e.lngLat, undefined, true)
+        if (toolStore.active === TOOLS.ROUTE)    routeState.addWaypoint(e.lngLat, undefined, false)
+        else if (toolStore.active === TOOLS.TRACK)    routeState.addWaypoint(e.lngLat, undefined, true)
+        else if (toolStore.active === TOOLS.WAYPOINT) poisStore.add(e.lngLat)
       })
 
       // Eraser lasso: shift+drag to select and delete multiple waypoints
@@ -450,7 +608,10 @@
     })
   })
 
-  onDestroy(() => map?.remove())
+  onDestroy(() => {
+    poiMarkerMap.forEach(({ marker, popup }) => { popup?.remove(); marker.remove() })
+    map?.remove()
+  })
 </script>
 
 <div class="map-wrap">
@@ -547,4 +708,131 @@
     pointer-events: none;
     white-space: nowrap;
   }
+
+  /* POI markers */
+  :global(.poi-marker) {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    cursor: pointer;
+  }
+
+  :global(.poi-pin) {
+    filter: drop-shadow(0 2px 3px rgba(0,0,0,0.45));
+    transition: filter 0.12s, transform 0.12s;
+    line-height: 0;
+  }
+
+  :global(.poi-marker:hover .poi-pin) {
+    filter: drop-shadow(0 3px 5px rgba(0,0,0,0.5));
+    transform: translateY(-2px);
+  }
+
+  :global(.poi-name) {
+    font-size: 11px;
+    font-weight: 600;
+    color: #1e1e2e;
+    background: rgba(255,255,255,0.93);
+    padding: 1px 5px;
+    border-radius: 3px;
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* POI edit popup — override MapLibre popup defaults */
+  :global(.poi-popup .maplibregl-popup-content) {
+    background: rgba(24, 24, 37, 0.96);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    padding: 10px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+    color: #cdd6f4;
+  }
+
+  :global(.poi-popup .maplibregl-popup-tip) {
+    display: none;
+  }
+
+  :global(.poi-popup .maplibregl-popup-close-button) {
+    color: #585b70;
+    font-size: 18px;
+    line-height: 1;
+    padding: 4px 6px;
+    border-radius: 4px;
+    top: 4px;
+    right: 4px;
+  }
+
+  :global(.poi-popup .maplibregl-popup-close-button:hover) {
+    background: rgba(255,255,255,0.07);
+    color: #cdd6f4;
+  }
+
+  :global(.poi-edit) {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 186px;
+  }
+
+  :global(.poi-edit-name) {
+    width: 100%;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 5px;
+    background: rgba(17, 17, 27, 0.7);
+    color: #cdd6f4;
+    padding: 5px 8px;
+    font-size: 13px;
+    outline: none;
+  }
+
+  :global(.poi-edit-name::placeholder) { color: #45475a; }
+
+  :global(.poi-edit-name:focus) {
+    border-color: #89b4fa;
+  }
+
+  :global(.poi-edit-syms) {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+
+  :global(.poi-sym-btn) {
+    width: 30px;
+    height: 30px;
+    border: 1.5px solid transparent;
+    border-radius: 5px;
+    background: transparent;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: border-color 0.1s, background 0.1s;
+    line-height: 0;
+  }
+
+  :global(.poi-sym-btn:hover) { background: rgba(255,255,255,0.08); }
+  :global(.poi-sym-btn.active) { border-color: #89b4fa; background: rgba(137,180,250,0.12); }
+
+  :global(.poi-del-btn) {
+    width: 100%;
+    padding: 5px;
+    border: none;
+    border-radius: 5px;
+    background: rgba(243, 139, 168, 0.12);
+    color: #f38ba8;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background 0.1s;
+  }
+
+  :global(.poi-del-btn:hover) { background: rgba(243, 139, 168, 0.22); }
 </style>

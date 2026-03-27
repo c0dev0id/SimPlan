@@ -1,8 +1,9 @@
 export const TOOLS = {
-  SELECT: 'select',
-  ROUTE:  'route',   // draw with BRouter snapping
-  TRACK:  'track',   // draw with straight lines
-  ERASER: 'eraser',
+  SELECT:   'select',
+  ROUTE:    'route',    // draw with BRouter snapping
+  TRACK:    'track',    // draw with straight lines
+  WAYPOINT: 'waypoint', // place independent POI markers
+  ERASER:   'eraser',
 }
 
 function createToolStore() {
