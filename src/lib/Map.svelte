@@ -45,11 +45,11 @@
   }
 
   // Sync markers whenever waypoints change (after map is ready)
+  // rebuildMarkers handles its own cleanup; onDestroy handles component teardown
   $effect(() => {
-    const wps = routeState.waypoints.slice() // track as dependency
+    const wps = routeState.waypoints.slice()
     if (!mapLoaded) return
     rebuildMarkers(wps)
-    return () => markerInstances.forEach(m => m.remove())
   })
 
   // --- Route layer -----------------------------------------------------
@@ -168,6 +168,8 @@
     map.addControl(new maplibregl.NavigationControl(), 'top-right')
     map.addControl(new maplibregl.ScaleControl(), 'bottom-right')
 
+    map.on('error', e => console.error('MapLibre error:', e.error))
+
     map.on('load', () => {
       // Background layer for saved (non-active) tracks
       map.addSource('saved-tracks', {
@@ -223,6 +225,7 @@
       })
 
       setupLineDrag()
+      map.resize()
       mapLoaded = true
     })
   })
@@ -245,8 +248,8 @@
   }
 
   .map {
-    width: 100%;
-    height: 100%;
+    position: absolute;
+    inset: 0;
   }
 
   :global(.wp-marker) {
