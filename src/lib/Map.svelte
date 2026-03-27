@@ -14,7 +14,30 @@
 
   let container
   let map
-  let mapLoaded = $state(false)
+  let mapLoaded    = $state(false)
+  let locating     = $state(false)
+  let locateError  = $state('')
+
+  function locate() {
+    if (!navigator.geolocation) { locateError = 'Geolocation not supported'; return }
+    locating    = true
+    locateError = ''
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        map.flyTo({
+          center: [pos.coords.longitude, pos.coords.latitude],
+          zoom: 18,
+          speed: 2,
+        })
+        locating = false
+      },
+      err => {
+        locateError = err.code === 1 ? 'Location access denied' : 'Location unavailable'
+        locating    = false
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    )
+  }
 
   // --- Marker management -----------------------------------------------
 
@@ -376,6 +399,28 @@
 
 <div class="map-wrap">
   <div bind:this={container} class="map"></div>
+
+  <button
+    class="locate-btn"
+    class:loading={locating}
+    onclick={locate}
+    title={locateError || 'Go to my location'}
+    aria-label="Go to my location"
+  >
+    {#if locating}
+      <span class="spinner"></span>
+    {:else}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+        <path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" stroke="none" fill="currentColor" opacity="0.15"/>
+      </svg>
+    {/if}
+  </button>
+
+  {#if locateError}
+    <div class="locate-error">{locateError}</div>
+  {/if}
 </div>
 
 <style>
@@ -413,5 +458,61 @@
 
   :global(.wp-marker.wp-last) {
     background: #dc2626;
+  }
+
+  .locate-btn {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 10;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 6px;
+    background: rgba(24, 24, 37, 0.92);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    color: #cdd6f4;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.12s, color 0.12s;
+  }
+
+  .locate-btn:hover {
+    background: rgba(49, 50, 68, 0.95);
+    color: #89b4fa;
+  }
+
+  .locate-btn :global(svg) {
+    width: 18px;
+    height: 18px;
+  }
+
+  .locate-btn .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid #45475a;
+    border-top-color: #89b4fa;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .locate-error {
+    position: absolute;
+    top: 54px;
+    left: 10px;
+    background: rgba(24, 24, 37, 0.92);
+    color: #f38ba8;
+    font-size: 0.75rem;
+    padding: 5px 9px;
+    border-radius: 5px;
+    border: 1px solid rgba(243, 139, 168, 0.3);
+    pointer-events: none;
+    white-space: nowrap;
   }
 </style>
