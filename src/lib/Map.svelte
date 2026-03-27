@@ -39,59 +39,85 @@
     )
   }
 
-  // --- Marker management -----------------------------------------------
+  // --- Waypoints GL layer ----------------------------------------------
 
-  let markerInstances = []
-
-  function createMarkerEl(isFirst, isLast) {
-    const el = document.createElement('div')
-    el.className = 'wp-marker' + (isFirst ? ' wp-first' : isLast ? ' wp-last' : '')
-    return el
+  function buildWaypointsGeoJSON(wps, overrideIdx = -1, overrideLngLat = null) {
+    const n = wps.length
+    return {
+      type: 'FeatureCollection',
+      features: wps.map((wp, i) => {
+        const coords = (i === overrideIdx && overrideLngLat)
+          ? [overrideLngLat.lng, overrideLngLat.lat]
+          : [wp.lng, wp.lat]
+        return {
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: coords },
+          properties: {
+            index: i,
+            label: String(i + 1),
+            color: i === 0 ? '#16a34a' : i === n - 1 ? '#dc2626' : '#2563eb',
+          },
+        }
+      }),
+    }
   }
 
-  function rebuildMarkers(waypoints) {
-    markerInstances.forEach(m => m.remove())
-    const tool = toolStore.active
-    markerInstances = waypoints.map((wp, i) => {
-      const isFirst = i === 0
-      const isLast  = i === waypoints.length - 1
-      const el      = createMarkerEl(isFirst, isLast)
+  // Sync GL waypoints source whenever waypoints change
+  $effect(() => {
+    const wps = routeState.waypoints.slice()
+    if (!mapLoaded) return
+    map.getSource('waypoints')?.setData(buildWaypointsGeoJSON(wps))
+  })
 
-      if (tool === TOOLS.ERASER) el.style.cursor = 'crosshair'
+  function setupWaypointInteraction() {
+    // Drag to move
+    map.on('mousedown', 'waypoints-circle', e => {
+      if (toolStore.active === TOOLS.ERASER) return
+      e.preventDefault()
+      const idx = e.features[0].properties.index
+      map.dragPan.disable()
+      map.getCanvas().style.cursor = 'grabbing'
+      clearRubberBand()
 
-      const marker = new maplibregl.Marker({
-        element: el,
-        draggable: tool !== TOOLS.ERASER,
-        anchor: 'center',
-      }).setLngLat(wp).addTo(map)
-
-      if (tool !== TOOLS.ERASER) {
-        marker.on('dragend', () => routeState.moveWaypoint(i, marker.getLngLat()))
+      const onMove = ev => {
+        map.getSource('waypoints').setData(
+          buildWaypointsGeoJSON(routeState.waypoints, idx, ev.lngLat)
+        )
       }
 
-      el.addEventListener('click', e => {
-        if (toolStore.active === TOOLS.ERASER) {
-          e.stopPropagation()
-          routeState.removeWaypoint(i)
-        }
-      })
+      const onUp = ev => {
+        map.off('mousemove', onMove)
+        map.off('mouseup',   onUp)
+        map.dragPan.enable()
+        map.getCanvas().style.cursor = ''
+        routeState.moveWaypoint(idx, ev.lngLat)
+      }
 
-      el.addEventListener('contextmenu', e => {
-        e.preventDefault()
-        routeState.removeWaypoint(i)
-      })
+      map.on('mousemove', onMove)
+      map.on('mouseup',   onUp)
+    })
 
-      return marker
+    // Eraser click → delete
+    map.on('click', 'waypoints-circle', e => {
+      if (toolStore.active !== TOOLS.ERASER) return
+      e.preventDefault()
+      routeState.removeWaypoint(e.features[0].properties.index)
+    })
+
+    // Right-click → delete
+    map.on('contextmenu', 'waypoints-circle', e => {
+      e.preventDefault()
+      routeState.removeWaypoint(e.features[0].properties.index)
+    })
+
+    // Cursor hints
+    map.on('mouseenter', 'waypoints-circle', () => {
+      if (toolStore.active !== TOOLS.ERASER) map.getCanvas().style.cursor = 'grab'
+    })
+    map.on('mouseleave', 'waypoints-circle', () => {
+      map.getCanvas().style.cursor = ''
     })
   }
-
-  // Sync markers whenever waypoints or active tool change
-  $effect(() => {
-    const wps  = routeState.waypoints.slice()
-    void toolStore.active  // track as dependency
-    if (!mapLoaded) return
-    rebuildMarkers(wps)
-  })
 
   // --- Route layer -----------------------------------------------------
 
@@ -209,12 +235,10 @@
       clearRubberBand()
 
       // Ghost marker follows the cursor during drag
-      const ghost = new maplibregl.Marker({
-        element: createMarkerEl(false, false),
-        anchor: 'center',
-      }).setLngLat(e.lngLat).addTo(map)
-      ghost.getElement().style.opacity = '0.6'
-      ghost.getElement().style.pointerEvents = 'none'
+      const ghostEl = document.createElement('div')
+      ghostEl.style.cssText = 'width:18px;height:18px;border-radius:50%;background:#2563eb;border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);opacity:.6;pointer-events:none'
+      const ghost = new maplibregl.Marker({ element: ghostEl, anchor: 'center' })
+        .setLngLat(e.lngLat).addTo(map)
 
       let lastLngLat = e.lngLat
 
@@ -331,9 +355,11 @@
       })
       map.getCanvas().addEventListener('mouseleave', clearRubberBand)
 
-      // Click on blank map → append waypoint (place tool only)
+      // Click on blank map → append waypoint (skip if clicking an existing waypoint)
       map.on('click', e => {
         if (e.defaultPrevented) return
+        const onWp = map.queryRenderedFeatures(e.point, { layers: ['waypoints-circle'] })
+        if (onWp.length > 0) return
         if (toolStore.active === TOOLS.ROUTE) routeState.addWaypoint(e.lngLat, undefined, false)
         else if (toolStore.active === TOOLS.TRACK) routeState.addWaypoint(e.lngLat, undefined, true)
       })
@@ -387,16 +413,44 @@
         map.on('mouseup',   onUp)
       })
 
+      // Waypoints: circle + number label (rendered by GL, no DOM lag)
+      map.addSource('waypoints', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.addLayer({
+        id: 'waypoints-circle',
+        type: 'circle',
+        source: 'waypoints',
+        paint: {
+          'circle-radius': 10,
+          'circle-color': ['get', 'color'],
+          'circle-stroke-width': 2.5,
+          'circle-stroke-color': '#ffffff',
+        },
+      })
+      map.addLayer({
+        id: 'waypoints-label',
+        type: 'symbol',
+        source: 'waypoints',
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-size': 11,
+          'text-font': ['Noto Sans Bold', 'Open Sans Bold', 'Arial Unicode MS Bold'],
+          'text-allow-overlap': true,
+          'text-ignore-placement': true,
+        },
+        paint: { 'text-color': '#ffffff' },
+      })
+
+      setupWaypointInteraction()
       setupLineDrag()
       map.resize()
       mapLoaded = true
     })
   })
 
-  onDestroy(() => {
-    markerInstances.forEach(m => m.remove())
-    map?.remove()
-  })
+  onDestroy(() => map?.remove())
 </script>
 
 <div class="map-wrap">
@@ -436,30 +490,6 @@
   .map {
     position: absolute;
     inset: 0;
-  }
-
-  :global(.wp-marker) {
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: #2563eb;
-    border: 2.5px solid #fff;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
-    cursor: grab;
-    transition: transform 0.1s;
-  }
-
-  :global(.wp-marker:active) {
-    cursor: grabbing;
-    transform: scale(1.3);
-  }
-
-  :global(.wp-marker.wp-first) {
-    background: #16a34a;
-  }
-
-  :global(.wp-marker.wp-last) {
-    background: #dc2626;
   }
 
   .locate-btn {
