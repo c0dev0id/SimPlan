@@ -115,13 +115,36 @@
     return minIdx
   }
 
+  // --- Rubber band (cursor → last waypoint preview line) ---------------
+
+  function setRubberBand(lngLat) {
+    const wps = routeState.waypoints
+    if (!wps.length) { clearRubberBand(); return }
+    const last = wps[wps.length - 1]
+    map.getSource('rubber-band').setData({
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: [[last.lng, last.lat], [lngLat.lng, lngLat.lat]],
+      },
+    })
+  }
+
+  function clearRubberBand() {
+    map.getSource('rubber-band')?.setData({ type: 'FeatureCollection', features: [] })
+  }
+
   // --- Drag-on-line ----------------------------------------------------
+
+  let isLineDragging = false
 
   function setupLineDrag() {
     map.on('mousedown', 'route-hit', e => {
       e.preventDefault()
+      isLineDragging = true
       const insertIdx = findInsertIndex(e.lngLat)
       map.dragPan.disable()
+      clearRubberBand()
 
       // Ghost marker follows the cursor during drag
       const ghost = new maplibregl.Marker({
@@ -144,6 +167,7 @@
         map.getCanvas().style.cursor = ''
         map.dragPan.enable()
         ghost.remove()
+        isLineDragging = false
         routeState.addWaypoint(lastLngLat, insertIdx)
       }
 
@@ -222,6 +246,28 @@
         source: 'route',
         paint: { 'line-color': 'transparent', 'line-width': 20 },
       })
+
+      // Rubber-band preview line
+      map.addSource('rubber-band', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.addLayer({
+        id: 'rubber-band',
+        type: 'line',
+        source: 'rubber-band',
+        paint: {
+          'line-color': '#2563eb',
+          'line-width': 2,
+          'line-dasharray': [4, 3],
+          'line-opacity': 0.6,
+        },
+      })
+
+      map.on('mousemove', e => {
+        if (!isLineDragging) setRubberBand(e.lngLat)
+      })
+      map.getCanvas().addEventListener('mouseleave', clearRubberBand)
 
       // Click on blank map → append waypoint
       map.on('click', e => {
