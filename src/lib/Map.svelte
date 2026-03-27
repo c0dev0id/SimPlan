@@ -4,6 +4,7 @@
   import 'maplibre-gl/dist/maplibre-gl.css'
   import { MAPTILER_KEY } from '../config.js'
   import { routeState } from '../stores/route.svelte.js'
+  import { tracksStore } from '../stores/tracks.svelte.js'
 
   let container
   let map
@@ -64,8 +65,23 @@
   }
 
   $effect(() => {
-    void routeState.segments.slice() // track dependency
+    void routeState.segments.slice()
     updateRouteLayer()
+  })
+
+  // Sync saved (non-active) tracks as background reference lines
+  $effect(() => {
+    if (!mapLoaded) return
+    const src = map.getSource('saved-tracks')
+    if (!src) return
+    const activeId = tracksStore.activeId
+    const features = tracksStore.tracks
+      .filter(t => t.id !== activeId)
+      .flatMap(t => (t.segments ?? [])
+        .filter(Boolean)
+        .map(seg => ({ ...seg, properties: { ...seg.properties, trackColor: t.color } }))
+      )
+    src.setData({ type: 'FeatureCollection', features })
   })
 
   // --- Geometry helpers ------------------------------------------------
@@ -153,6 +169,23 @@
     map.addControl(new maplibregl.ScaleControl(), 'bottom-right')
 
     map.on('load', () => {
+      // Background layer for saved (non-active) tracks
+      map.addSource('saved-tracks', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.addLayer({
+        id: 'saved-tracks-line',
+        type: 'line',
+        source: 'saved-tracks',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': ['coalesce', ['get', 'trackColor'], '#888'],
+          'line-width': 2.5,
+          'line-opacity': 0.55,
+        },
+      })
+
       map.addSource('route', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },

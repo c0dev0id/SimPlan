@@ -1,7 +1,19 @@
 <script>
+  import { onMount } from 'svelte'
   import Map from './lib/Map.svelte'
   import Sidebar from './lib/Sidebar.svelte'
   import Toolbar from './lib/Toolbar.svelte'
+  import { routeState } from './stores/route.svelte.js'
+  import { tracksStore } from './stores/tracks.svelte.js'
+
+  onMount(() => tracksStore.init())
+
+  // Auto-save 2 s after the route stops changing
+  $effect(() => {
+    void routeState.segments.slice()
+    const t = setTimeout(() => tracksStore.saveActive(), 2000)
+    return () => clearTimeout(t)
+  })
 </script>
 
 <div class="app">

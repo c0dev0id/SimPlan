@@ -71,6 +71,13 @@ function createRouteState() {
     segments.splice(0, segments.length)
   }
 
+  /** Load saved waypoints + cached segments directly, no BRouter fetch. */
+  function loadFrom(wps, segs, prof) {
+    waypoints.splice(0, waypoints.length, ...wps)
+    segments.splice(0, segments.length, ...segs.slice(0, Math.max(0, wps.length - 1)))
+    if (prof) profile = prof
+  }
+
   return {
     get waypoints() { return waypoints },
     get segments()  { return segments },
@@ -81,6 +88,7 @@ function createRouteState() {
     removeWaypoint,
     setProfile,
     clear,
+    loadFrom,
   }
 }
 

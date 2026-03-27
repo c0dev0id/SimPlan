@@ -1,6 +1,16 @@
 <script>
   import { routeState } from '../stores/route.svelte.js'
+  import { tracksStore } from '../stores/tracks.svelte.js'
   import { PROFILES } from '../lib/routing/brouter.js'
+  import { exportGpx } from './gpx.js'
+
+  function handleExport() {
+    const active = tracksStore.tracks.find(t => t.id === tracksStore.activeId)
+    const name   = active?.name ?? 'route'
+    exportGpx(name, routeState.segments)
+  }
+
+  const canExport = $derived(routeState.segments.some(Boolean))
 </script>
 
 <header class="toolbar">
@@ -22,7 +32,16 @@
 
   <div class="spacer"></div>
 
-  <button class="btn-clear" onclick={() => routeState.clear()} title="Clear route">
+  <button
+    class="btn"
+    disabled={!canExport}
+    onclick={handleExport}
+    title="Export current route as GPX"
+  >
+    Export GPX
+  </button>
+
+  <button class="btn secondary" onclick={() => routeState.clear()} title="Clear route">
     Clear
   </button>
 </header>
@@ -36,7 +55,7 @@
     display: flex;
     align-items: center;
     padding: 0 16px;
-    gap: 12px;
+    gap: 10px;
     border-bottom: 1px solid #313244;
     z-index: 10;
   }
@@ -78,18 +97,33 @@
 
   .spacer { flex: 1; }
 
-  .btn-clear {
-    background: transparent;
-    color: #6c7086;
+  .btn {
+    background: #313244;
+    color: #cdd6f4;
     border: 1px solid #45475a;
     border-radius: 4px;
-    padding: 4px 10px;
+    padding: 4px 12px;
     font-size: 0.82rem;
     cursor: pointer;
+    white-space: nowrap;
   }
 
-  .btn-clear:hover {
+  .btn:hover:not(:disabled) {
+    background: #45475a;
+  }
+
+  .btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  .btn.secondary {
+    background: transparent;
+    color: #6c7086;
+  }
+
+  .btn.secondary:hover {
     color: #cdd6f4;
-    border-color: #6c7086;
+    background: #313244;
   }
 </style>
