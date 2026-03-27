@@ -42,6 +42,15 @@
 
   // --- Waypoints GL layer ----------------------------------------------
 
+  const ROUTE_COLOR = '#2563eb'
+  const TRACK_COLOR = '#991b1b'
+
+  function segColor(i) {
+    // Pick the segment after point i; fall back to the segment before for the last point
+    const seg = routeState.segments[i] ?? routeState.segments[i - 1]
+    return seg?.properties?.straight ? TRACK_COLOR : ROUTE_COLOR
+  }
+
   function buildWaypointsGeoJSON(wps, overrideIdx = -1, overrideLngLat = null) {
     const n = wps.length
     return {
@@ -50,22 +59,21 @@
         const coords = (i === overrideIdx && overrideLngLat)
           ? [overrideLngLat.lng, overrideLngLat.lat]
           : [wp.lng, wp.lat]
+        // First / last keep their landmark colors; middle points reflect segment type
+        const color = i === 0 ? '#16a34a' : i === n - 1 ? '#dc2626' : segColor(i)
         return {
           type: 'Feature',
           geometry: { type: 'Point', coordinates: coords },
-          properties: {
-            index: i,
-            label: String(i + 1),
-            color: i === 0 ? '#16a34a' : i === n - 1 ? '#dc2626' : '#2563eb',
-          },
+          properties: { index: i, label: String(i + 1), color },
         }
       }),
     }
   }
 
-  // Sync GL waypoints source whenever waypoints change
+  // Sync GL waypoints source whenever waypoints or segments change
   $effect(() => {
     const wps = routeState.waypoints.slice()
+    void routeState.segments.slice() // also re-run when segment types change
     if (!mapLoaded) return
     map.getSource('waypoints')?.setData(buildWaypointsGeoJSON(wps))
   })
@@ -362,7 +370,8 @@
 
   function setRubberBand(lngLat) {
     const wps = routeState.waypoints
-    const drawing = toolStore.active === TOOLS.ROUTE || toolStore.active === TOOLS.TRACK
+    const active = toolStore.active
+    const drawing = active === TOOLS.ROUTE || active === TOOLS.TRACK
     if (!wps.length || !drawing) { clearRubberBand(); return }
     const last = wps[wps.length - 1]
     map.getSource('rubber-band').setData({
@@ -371,6 +380,7 @@
         type: 'LineString',
         coordinates: [[last.lng, last.lat], [lngLat.lng, lngLat.lat]],
       },
+      properties: { color: active === TOOLS.TRACK ? TRACK_COLOR : ROUTE_COLOR },
     })
   }
 
@@ -479,7 +489,10 @@
         type: 'line',
         source: 'route',
         layout: { 'line-join': 'round', 'line-cap': 'round' },
-        paint: { 'line-color': '#2563eb', 'line-width': 4 },
+        paint: {
+          'line-color': ['case', ['boolean', ['get', 'straight'], false], TRACK_COLOR, ROUTE_COLOR],
+          'line-width': 4,
+        },
       })
 
       // Wide invisible layer for pointer events (drag + cursor)
@@ -500,7 +513,7 @@
         type: 'line',
         source: 'rubber-band',
         paint: {
-          'line-color': '#2563eb',
+          'line-color': ['coalesce', ['get', 'color'], ROUTE_COLOR],
           'line-width': 2,
           'line-dasharray': [4, 3],
           'line-opacity': 0.6,
