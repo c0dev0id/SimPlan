@@ -98,7 +98,7 @@
         map.off('mousemove', onMove)
         map.off('mouseup',   onUp)
         map.dragPan.enable()
-        map.getCanvas().style.cursor = ''
+        map.getCanvas().style.cursor = toolCursor()
         routeState.moveWaypoint(idx, ev.lngLat)
       }
 
@@ -119,12 +119,12 @@
       routeState.removeWaypoint(e.features[0].properties.index)
     })
 
-    // Cursor hints — preserve crosshair in drawing modes for accurate placement
+    // Show grab cursor when hovering a draggable waypoint
     map.on('mouseenter', 'waypoints-circle', () => {
-      if (toolStore.active === TOOLS.SELECT) map.getCanvas().style.cursor = 'grab'
+      if (toolStore.active !== TOOLS.ERASER) map.getCanvas().style.cursor = 'grab'
     })
     map.on('mouseleave', 'waypoints-circle', () => {
-      if (toolStore.active === TOOLS.SELECT) map.getCanvas().style.cursor = ''
+      if (toolStore.active !== TOOLS.ERASER) map.getCanvas().style.cursor = toolCursor()
     })
   }
 
@@ -345,16 +345,19 @@
 
   $effect(() => {
     if (!mapLoaded) return
-    const cursor = {
+    map.getCanvas().style.cursor = toolCursor()
+    clearRubberBand()
+  })
+
+  function toolCursor() {
+    return {
       [TOOLS.SELECT]:   '',
       [TOOLS.ERASER]:   'cell',
       [TOOLS.ROUTE]:    'crosshair',
       [TOOLS.TRACK]:    'crosshair',
       [TOOLS.WAYPOINT]: 'crosshair',
-    }
-    map.getCanvas().style.cursor = cursor[toolStore.active] ?? ''
-    clearRubberBand()
-  })
+    }[toolStore.active] ?? ''
+  }
 
   // --- Lasso helpers ---------------------------------------------------
 
